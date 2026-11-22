@@ -444,3 +444,112 @@ class TestFullChainSnapshot:
         cohort_svc = UserCohortService()
         cohort_detail = cohort_svc.get_cohort_detail(1)
         assert cohort_detail is not None
+
+class TestRecalcDependencyVerification:
+    """重算依赖核验：来源按日期分段、缺口不产生已确认差异、重试不重复计入。"""
+
+    TASK_ID = 4  # 月结营收指标，2026-11-01 至 2026-11-05
+
+    def _reset_task(self):
+        task = store.find("recalc_engine", self.TASK_ID)
+        task.update({
+            "重算状态": "待调度", "产出差异": "", "status": "待调度",
+            "pending": True, "abnormal": False,
+        })
+        store.recalc_history().clear()
+        lineage = store.rows("field_lineage")
+        lineage[:] = [row for row in lineage if int(row.get("id", 0)) <= 5]
+        return task
+
+    def _fill_gap(self):
+        svc = FieldLineageService()
+        entry, missing = svc.create_entry({
+            "目标字段": "月结营收指标",
+            "来源字段列表": "order_amount, tax_amount",
+            "转换逻辑": "v1.0 含税营收转换",
+            "中间表": "dws_revenue_v1",
+            "血缘深度": "3",
+            "适用版本": "v1.0",
+            "生效开始": "2026-11-03",
+            "生效结束": "2026-11-03",
+        })
+        assert entry is not None and not missing
+        return entry
+
+    def test_segments_and_gap(self):
+        self._reset_task()
+        result = RecalcEngineService().verify_dependencies(self.TASK_ID)
+        assert result["依赖状态"] == "有缺口"
+        assert result["缺口日期"] == ["2026-11-03"]
+        assert result["可复核天数"] == 4
+        segments = result["分段"]
+        assert [s["区间"] for s in segments] == [
+            "2026-11-01 至 2026-11-02", "2026-11-03", "2026-11-04 至 2026-11-05",
+        ]
+        assert [s["可复核"] for s in segments] == [True, False, True]
+        assert segments[0]["适用版本"] == "v1.0"
+        assert segments[2]["适用版本"] == "v1.1"
+        assert segments[1]["缺口"]
+
+    def test_missing_day_never_confirmed(self):
+        self._reset_task()
+        svc = RecalcEngineService()
+        result = svc.start_recalc(self.TASK_ID)
+        assert "2026-11-03" not in result["已确认日期"]
+        assert result["缺口日期"] == ["2026-11-03"]
+        history = svc.get_recalc_history(task_id=self.TASK_ID)
+        assert {h["计量日期"] for h in history} == {
+            "2026-11-01", "2026-11-02", "2026-11-04", "2026-11-05",
+        }
+        assert result["状态"] == "重算中"
+
+    def test_retry_does_not_double_count(self):
+        self._reset_task()
+        svc = RecalcEngineService()
+        first = svc.start_recalc(self.TASK_ID)
+        second = svc.start_recalc(self.TASK_ID)
+        assert second["本次确认日期"] == []
+        assert set(second["本次跳过已确认"]) == set(first["本次确认日期"])
+        counts = {}
+        for record in svc.get_recalc_history(task_id=self.TASK_ID):
+            day = record["计量日期"]
+            counts[day] = counts.get(day, 0) + 1
+        assert all(count == 1 for count in counts.values())
+
+    def test_fill_gap_and_continue_same_task(self):
+        self._reset_task()
+        svc = RecalcEngineService()
+        first = svc.start_recalc(self.TASK_ID)
+        self._fill_gap()
+        verification = svc.verify_dependencies(self.TASK_ID)
+        assert verification["依赖状态"] == "完整"
+        assert verification["已确认天数"] == first["已确认天数"]
+        assert verification["待确认天数"] == 1
+
+        second = svc.start_recalc(self.TASK_ID)
+        assert second["本次确认日期"] == ["2026-11-03"]
+        assert second["状态"] == "已完成"
+        counts = {}
+        for record in svc.get_recalc_history(task_id=self.TASK_ID):
+            day = record["计量日期"]
+            counts[day] = counts.get(day, 0) + 1
+        assert counts == {day: 1 for day in [
+            "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05",
+        ]}
+        assert [s["区间"] for s in second["已确认区间"]] == [
+            "2026-11-01 至 2026-11-02", "2026-11-03", "2026-11-04 至 2026-11-05",
+        ]
+
+    def test_segment_uses_version_transform(self):
+        self._reset_task()
+        second = RecalcEngineService().start_recalc(self.TASK_ID)
+        spans = [(s["适用版本"], s["区间"]) for s in second["已确认区间"]]
+        assert ("v1.0", "2026-11-01 至 2026-11-02") in spans
+        assert ("v1.1", "2026-11-04 至 2026-11-05") in spans
+
+    def test_run_action_goes_through_verification(self):
+        self._reset_task()
+        entry, message = RecalcEngineService().run_action(self.TASK_ID, "启动重算")
+        assert entry is not None
+        assert "待补来源" in message or "确认" in message
+        assert entry["重算状态"] in ("重算中", "重算失败", "已完成")

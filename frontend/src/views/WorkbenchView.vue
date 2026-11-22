@@ -70,12 +70,14 @@
       </tbody>
     </table>
 
+    <RecalcPanel v-if="meta.key === 'recalc_engine'" :rows="rows" />
+
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
         <h3>登记{{ meta.entity }}</h3>
-        <label v-for="field in meta.fields" :key="field" class="create-field">
-          <span>{{ field }}</span>
-          <input v-model="createValues[field]" :data-testid="`create-${field}`" required />
+        <label v-for="field in createFields" :key="field" class="create-field">
+          <span>{{ field }}<template v-if="optionalFields.includes(field)">（选填）</template></span>
+          <input v-model="createValues[field]" :data-testid="`create-${field}`" :required="!optionalFields.includes(field)" />
         </label>
         <div class="page-actions">
           <button class="btn" type="button" @click="showCreate = false">取消</button>
@@ -104,6 +106,7 @@ import {
   runAction as applyAction,
 } from '@/api/backend-service'
 import type { EntryRow } from '@/data/types'
+import RecalcPanel from '@/views/RecalcPanel.vue'
 
 const props = defineProps<{ moduleKey: string }>()
 const meta = moduleMeta(props.moduleKey)
@@ -112,6 +115,10 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = meta.fields.slice(0, 3)
+// 字段血缘补来源时需要登记适用区间，重算核验才能按日期取到来源。
+const optionalFields =
+  meta.key === 'field_lineage' ? ['适用版本', '生效开始', '生效结束'] : []
+const createFields = [...meta.fields, ...optionalFields]
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
@@ -145,7 +152,7 @@ async function exportRows() {
 }
 
 function openCreate() {
-  createValues.value = Object.fromEntries(meta.fields.map((field) => [field, '']))
+  createValues.value = Object.fromEntries(createFields.map((field) => [field, '']))
   errorMessage.value = ''
   showCreate.value = true
 }

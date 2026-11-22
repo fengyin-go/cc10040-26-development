@@ -545,3 +545,41 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '中间表': '字段血缘样例3',
   '血缘深度': '字段血缘样例3'}]
 }
+
+
+# ── 月结重算演算场景 ──
+# 一次月结申请覆盖 2026-11-01 至 2026-11-05：前两日沿用 v1.0 字段转换，
+# 末两日切到 v1.1 转换，第 3 日来源缺失，用来演示“按日期核验—补来源—继续重算”。
+SEED_ROWS["metric_definition"].append({
+    "id": 4, "指标名称": "月结营收指标", "计算口径": "月结口径按自然日汇总营收",
+    "统计粒度": "日", "数据源": "dwd_revenue_daily", "业务域": "财务月结",
+    "status": "已发布", "pending": False, "abnormal": False,
+})
+
+SEED_ROWS["caliber_version"].extend([
+    {"id": 4, "所属指标": "月结营收指标", "版本号": "v1.0", "口径描述": "原始含税营收",
+     "变更类型": "初始创建", "生效时间": "2026-10-01", "status": "已过期",
+     "pending": False, "abnormal": False},
+    {"id": 5, "所属指标": "月结营收指标", "版本号": "v1.1", "口径描述": "剔除退款后的净营收",
+     "变更类型": "口径调整", "生效时间": "2026-11-04", "status": "待生效",
+     "pending": True, "abnormal": False},
+])
+
+SEED_ROWS["recalc_engine"].append({
+    "id": 4, "关联指标": "月结营收指标", "新口径版本": "v1.1",
+    "历史时间范围": "2026-11-01 至 2026-11-05", "重算状态": "待调度",
+    "产出差异": "", "status": "待调度", "pending": True, "abnormal": False,
+})
+
+SEED_ROWS["field_lineage"].extend([
+    {"id": 4, "目标字段": "月结营收指标", "来源字段列表": "order_amount, tax_amount",
+     "转换逻辑": "v1.0 含税营收转换", "中间表": "dws_revenue_v1",
+     "血缘深度": "3", "适用版本": "v1.0",
+     "生效开始": "2026-11-01", "生效结束": "2026-11-02",
+     "status": "已建立", "pending": False, "abnormal": False},
+    {"id": 5, "目标字段": "月结营收指标", "来源字段列表": "order_amount, refund_amount",
+     "转换逻辑": "v1.1 净营收转换", "中间表": "dws_revenue_v1_1",
+     "血缘深度": "3", "适用版本": "v1.1",
+     "生效开始": "2026-11-04", "生效结束": "2026-11-05",
+     "status": "已建立", "pending": False, "abnormal": False},
+])

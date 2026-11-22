@@ -21,6 +21,23 @@ class FieldLineageService(BaseModuleService):
     ACTION_RULES = {"刷新血缘": "已建立", "标记断裂": "已断裂"}
     NEGATIVE_ACTIONS = []
 
+    # 补登来源时可带上适用区间；不进列表字段，避免改变既有登记表单契约。
+    OPTIONAL_RANGE_FIELDS = ["适用版本", "生效开始", "生效结束"]
+
+    def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+        """登记血缘条目，并保留可选的适用版本与生效区间。
+
+        跨模块数据流: field_lineage -> recalc_engine（重算依赖核验按区间取来源）
+        """
+        entry, missing = super().create_entry(values)
+        if entry is None:
+            return entry, missing
+        for field in self.OPTIONAL_RANGE_FIELDS:
+            value = str(values.get(field) or "").strip()
+            if value:
+                entry[field] = value
+        return entry, missing
+
     def trace_field(self, field_name: str) -> dict[str, Any]:
         """追溯字段的完整血缘链路。
 

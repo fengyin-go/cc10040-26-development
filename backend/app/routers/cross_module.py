@@ -241,18 +241,25 @@ def detection_coverage():
 
 # ── 重算引擎 ──
 
+@router.get("/recalc/{task_id}/dependencies")
+def verify_recalc_dependencies(task_id: int):
+    """重算依赖核验：读取字段血缘，按日期分段列出可执行来源和缺口"""
+    svc = RecalcEngineService()
+    return svc.verify_dependencies(task_id)
+
+
 @router.post("/recalc/{task_id}/start")
 def start_recalc(task_id: int):
-    """启动口径重算"""
+    """启动/继续口径重算，按日确认可核验区间的差异"""
     svc = RecalcEngineService()
     return svc.start_recalc(task_id)
 
 
 @router.get("/recalc/history")
-def recalc_history(metric_name: str | None = None):
-    """获取重算历史"""
+def recalc_history(metric_name: str | None = None, task_id: int | None = None):
+    """获取重算历史，可按指标或任务过滤"""
     svc = RecalcEngineService()
-    return svc.get_recalc_history(metric_name)
+    return svc.get_recalc_history(metric_name, task_id)
 
 
 @router.get("/recalc/{task_id}/estimate-impact")

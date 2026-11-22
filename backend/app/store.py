@@ -160,7 +160,13 @@ class Store:
     # ── Recalc operations ──
 
     def record_recalc(self, metric_id: int, old_version: str, new_version: str,
-                      time_range: str, diff_summary: str) -> dict[str, Any]:
+                      time_range: str, diff_summary: str,
+                      **extra: Any) -> dict[str, Any]:
+        """追加一条重算历史。
+
+        ``extra`` 用于承载按区间确认的明细（任务ID、计入日期、适用转换、差异等），
+        既保持原有调用方式可用，也让重算历史能按段复核。
+        """
         record = {
             "id": len(self._recalc_history) + 1,
             "关联指标": f"metric_{metric_id}",
@@ -170,6 +176,7 @@ class Store:
             "产出差异": diff_summary,
             "重算时间": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
+        record.update(extra)
         self._recalc_history.append(record)
         return record
 
